@@ -60,10 +60,18 @@
             during evaluation.</p>
         </div>
 
-        <div class="info-section upcoming">
-          <h3>🔄 Coming Soon: Backward Transfer</h3>
-          <p>Backward transfer analysis (how well models trained on future tasks perform on earlier tasks) is planned
-            for a future update. This will help evaluate catastrophic forgetting from the opposite perspective.</p>
+        <div class="info-section">
+          <h3>🔄 Forgetting (Backward Transfer)</h3>
+          <p><strong>Definition:</strong> For a current task j (j ≥ 2), evaluate the current model (trained up to task
+            j)
+            on each previous task i < j using the <em>thresholds selected on task i</em>. This measures how much the
+              model has forgotten earlier tasks.</p>
+          <p><strong>Delta Calculation:</strong> For all metrics (including AUCs), compute
+            <code>current<sub>j→i</sub> - baseline<sub>i</sub></code> using task i thresholds.
+          </p>
+          <p><strong>Hover behavior:</strong> In Table View, hover over row "Task j" to highlight the deltas applied to
+            all previous rows i < j. In Per-Class view, hover any Task j column to see per-class F1 deltas for all i <
+              j.</p>
         </div>
       </div>
     </div>
@@ -150,6 +158,13 @@
       </div>
 
       <div id="table-view" class="view-content">
+        <div class="hover-toggle" id="hover-toggle-main">
+          <span class="toggle-label">Hover Mode:</span>
+          <button class="hover-button active" onclick="setHoverMode('forward', 'hover-toggle-main')">Forward
+            Transfer</button>
+          <button class="hover-button" onclick="setHoverMode('forgetting', 'hover-toggle-main')">Forgetting
+            (BWT)</button>
+        </div>
         <div class="table-container">
           <h3>Baseline Results Summary</h3>
           <div class="table-wrapper">
@@ -175,8 +190,8 @@
               </tbody>
             </table>
             <div class="table-footnote">
-              <sup>*</sup> AUC columns use "gap to j-optimized" mode (baseline[j] - forward_transfer[i→j]) to show
-              closeness to j-tuned performance
+              <sup>*</sup> <span id="table-footnote-text">AUC columns use "gap to j-optimized" mode (baseline[j] -
+                forward_transfer[i→j]) to show closeness to j-tuned performance</span>
             </div>
           </div>
         </div>
@@ -184,6 +199,13 @@
     </div>
 
     <div id="per-class" class="tab-content">
+      <div class="hover-toggle" id="hover-toggle-perclass" style="margin-bottom: 12px;">
+        <span class="toggle-label">Hover Mode:</span>
+        <button class="hover-button active" onclick="setHoverMode('forward', 'hover-toggle-perclass')">Forward
+          Transfer</button>
+        <button class="hover-button" onclick="setHoverMode('forgetting', 'hover-toggle-perclass')">Forgetting
+          (BWT)</button>
+      </div>
       <div class="table-container">
         <h3>Per-class F1 (Baseline) Across Tasks</h3>
         <div class="table-wrapper">

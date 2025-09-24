@@ -1,5 +1,7 @@
 // Global variables to store data and charts
 let forwardData = null;
+let forgettingData = null;
+let hoverMode = 'forward'; // 'forward' | 'forgetting'
 let currentModel = 'replay-30';
 let charts = {};
 
@@ -254,8 +256,18 @@ document.addEventListener('DOMContentLoaded', function () {
 // Load JSON data
 async function loadData() {
   try {
-    const response = await fetch('./forward_evaluation_summary.json');
-    forwardData = await response.json();
+    const [forwardResp, forgettingResp] = await Promise.all([
+      fetch('./forward_evaluation_summary.json'),
+      fetch('./forgetting_evaluation_summary.json').catch(() => null)
+    ]);
+    forwardData = await forwardResp.json();
+    if (forgettingResp && forgettingResp.ok) {
+      try {
+        forgettingData = await forgettingResp.json();
+      } catch (_) {
+        forgettingData = null;
+      }
+    }
     console.log('Data loaded successfully:', Object.keys(forwardData));
     initializeCharts();
     // If per-class tab is active on load, populate its table
@@ -1813,8 +1825,12 @@ function populateTable() {
     }
   }
 
-  // Attach hover listeners for forward transfer deltas
-  attachForwardTransferHover(tableBody, taskData);
+  // Attach hover listeners depending on mode
+  if (hoverMode === 'forgetting' && forgettingData && forgettingData[currentModel] && forgettingData[currentModel].backward_transfer) {
+    attachBackwardTransferHover(tableBody, forgettingData[currentModel].backward_transfer, taskData);
+  } else {
+    attachForwardTransferHover(tableBody, taskData);
+  }
 }
 
 // Format numeric values for display
@@ -1934,6 +1950,7 @@ function attachForwardTransferHover(tableBody, taskData) {
   // Bind listeners
   rows.forEach(row => {
     row.addEventListener('mouseenter', () => {
+      if (hoverMode !== 'forward') return;
       const taskIndex = Number(row.dataset.task);
       if (!Number.isNaN(taskIndex)) {
         applyForwardDeltas(taskIndex);
@@ -2024,6 +2041,7 @@ function attachPerClassForwardHover(tableBody, taskData) {
       const td = cells[c];
       if (!td) continue;
       td.addEventListener('mouseenter', () => {
+        if (hoverMode !== 'forward') return;
         const taskIndex = Number(td.dataset.task);
         if (!Number.isNaN(taskIndex)) {
           applyPerClassDeltas(taskIndex);
@@ -2037,6 +2055,84 @@ function attachPerClassForwardHover(tableBody, taskData) {
       clearPerClassDeltas();
     });
     tableBody.dataset.perClassHoverBound = '1';
+  }
+}
+
+function attachBackwardTransferHover(tableBody, backwardTransfer, taskData) {
+  const rows = Array.from(tableBody.querySelectorAll('tr'));
+
+  function clearBwdDeltas() {
+    const currentRows = Array.from(tableBody.querySelectorAll('tr'));
+    currentRows.forEach(row => {
+      const cells = Array.from(row.querySelectorAll('td'));
+      for (let c = 1; c < cells.length; c++) {
+        const td = cells[c];
+        td.classList.remove('delta-positive', 'delta-negative');
+        const baseVal = td.dataset.value;
+        if (baseVal !== undefined) {
+          const num = Number(baseVal);
+          td.textContent = formatValue(Number.isNaN(num) ? baseVal : num);
+        }
+      }
+    });
+  }
+
+  function applyBwdDeltas(currentTaskIndex) {
+    clearBwdDeltas();
+    const jKey = String(currentTaskIndex);
+    const bwdForJ = backwardTransfer[jKey];
+    if (!bwdForJ || !bwdForJ.previous_tasks) return;
+
+    // For each previous task i < j, display current(j→i) - baseline(i)
+    for (let i = 1; i < currentTaskIndex; i++) {
+      const row = rows[i - 1];
+      if (!row) continue;
+      const prevTaskEntry = bwdForJ.previous_tasks[String(i)];
+      if (!prevTaskEntry || !prevTaskEntry.current || !prevTaskEntry.baseline) continue;
+
+      const cells = Array.from(row.querySelectorAll('td'));
+      for (let col = 0; col < METRIC_COLUMN_KEYS.length; col++) {
+        const td = cells[col + 1];
+        if (!td) continue;
+        const metricKey = METRIC_COLUMN_KEYS[col];
+        const curVal = prevTaskEntry.current[metricKey];
+        const baseVal = prevTaskEntry.baseline[metricKey];
+        if (typeof curVal === 'number' && typeof baseVal === 'number') {
+          const delta = curVal - baseVal;
+          td.textContent = formatDelta(delta);
+          if (delta > 0) {
+            td.classList.add('delta-positive');
+            td.classList.remove('delta-negative');
+          } else if (delta < 0) {
+            td.classList.add('delta-negative');
+            td.classList.remove('delta-positive');
+          } else {
+            td.classList.remove('delta-positive', 'delta-negative');
+          }
+        } else {
+          td.textContent = 'N/A';
+          td.classList.remove('delta-positive', 'delta-negative');
+        }
+      }
+    }
+  }
+
+  // Bind listeners
+  rows.forEach(row => {
+    row.addEventListener('mouseenter', () => {
+      if (hoverMode !== 'forgetting') return;
+      const taskIndex = Number(row.dataset.task);
+      if (!Number.isNaN(taskIndex)) {
+        applyBwdDeltas(taskIndex);
+      }
+    });
+  });
+
+  if (!tableBody.dataset.backwardHoverBound) {
+    tableBody.addEventListener('mouseleave', () => {
+      clearBwdDeltas();
+    });
+    tableBody.dataset.backwardHoverBound = '1';
   }
 }
 
@@ -2108,7 +2204,11 @@ function populatePerClassF1Table() {
     tableBody.appendChild(row);
   });
 
-  attachPerClassForwardHover(tableBody, taskData);
+  if (hoverMode === 'forgetting' && forgettingData && forgettingData[currentModel] && forgettingData[currentModel].backward_transfer) {
+    attachPerClassBackwardHover(tableBody, forgettingData[currentModel].backward_transfer);
+  } else {
+    attachPerClassForwardHover(tableBody, taskData);
+  }
 }
 
 function formatVulnerabilityName(v) {
@@ -2155,4 +2255,118 @@ function getF1ScoreClass(f) {
   if (f >= 0.5) return 'medium-score';
   if (f >= 0.3) return 'medium-score';
   return 'low-score';
+}
+
+function attachPerClassBackwardHover(tableBody, backwardTransfer) {
+  const rows = Array.from(tableBody.querySelectorAll('tr'));
+
+  function clearPerClassDeltas() {
+    const currentRows = Array.from(tableBody.querySelectorAll('tr'));
+    currentRows.forEach(row => {
+      const cells = Array.from(row.querySelectorAll('td'));
+      // skip first col (label) and last col (avg)
+      for (let c = 1; c < cells.length - 1; c++) {
+        const td = cells[c];
+        td.classList.remove('delta-positive', 'delta-negative');
+        const baseVal = td.dataset.value;
+        if (baseVal !== undefined) {
+          const num = Number(baseVal);
+          td.textContent = formatValue(Number.isNaN(num) ? baseVal : num);
+        }
+      }
+    });
+  }
+
+  function applyPerClassBwdDeltas(currentTaskIndex) {
+    clearPerClassDeltas();
+    const jKey = String(currentTaskIndex);
+    const bwdForJ = backwardTransfer[jKey];
+    if (!bwdForJ || !bwdForJ.previous_tasks) return;
+
+    // For each previous task i < j, update that column's cells across all vuln rows
+    rows.forEach(vRow => {
+      const cells = Array.from(vRow.querySelectorAll('td'));
+      for (let i = 1; i < currentTaskIndex; i++) {
+        const td = cells[i];
+        if (!td) continue;
+        const vulnType = td.dataset.vuln;
+        if (!vulnType) continue;
+        const prevTaskEntry = bwdForJ.previous_tasks[String(i)];
+        if (!prevTaskEntry) continue;
+        const curVal = prevTaskEntry.current[`f1_${vulnType}`];
+        const baseVal = prevTaskEntry.baseline[`f1_${vulnType}`];
+        if (typeof curVal === 'number' && typeof baseVal === 'number') {
+          const delta = curVal - baseVal;
+          td.textContent = formatDelta(delta);
+          if (delta > 0) {
+            td.classList.add('delta-positive');
+            td.classList.remove('delta-negative');
+          } else if (delta < 0) {
+            td.classList.add('delta-negative');
+            td.classList.remove('delta-positive');
+          } else {
+            td.classList.remove('delta-positive', 'delta-negative');
+          }
+        } else {
+          td.textContent = 'N/A';
+          td.classList.remove('delta-positive', 'delta-negative');
+        }
+      }
+    });
+  }
+
+  // Bind listeners on each task column cell
+  rows.forEach(row => {
+    const cells = Array.from(row.querySelectorAll('td'));
+    for (let c = 1; c <= 9; c++) {
+      const td = cells[c];
+      if (!td) continue;
+      td.addEventListener('mouseenter', () => {
+        if (hoverMode !== 'forgetting') return;
+        const taskIndex = Number(td.dataset.task);
+        if (!Number.isNaN(taskIndex)) {
+          applyPerClassBwdDeltas(taskIndex);
+        }
+      });
+    }
+  });
+
+  if (!tableBody.dataset.perClassBwdHoverBound) {
+    tableBody.addEventListener('mouseleave', () => {
+      clearPerClassDeltas();
+    });
+    tableBody.dataset.perClassBwdHoverBound = '1';
+  }
+}
+
+function setHoverMode(mode, toggleId) {
+  hoverMode = mode;
+  // Toggle button active state in all hover toggles
+  const toggleContainers = document.querySelectorAll('.hover-toggle');
+  toggleContainers.forEach(container => {
+    const buttons = container.querySelectorAll('.hover-button');
+    buttons.forEach(btn => btn.classList.remove('active'));
+    const toActivate = Array.from(buttons).find(b => b.textContent.toLowerCase().includes(mode === 'forward' ? 'forward' : 'forgetting'));
+    if (toActivate) toActivate.classList.add('active');
+  });
+
+  // Update footnote text
+  const footnote = document.getElementById('table-footnote-text');
+  if (footnote) {
+    if (hoverMode === 'forward') {
+      footnote.textContent = 'AUC columns use "gap to j-optimized" mode (baseline[j] - forward_transfer[i→j]) to show closeness to j-tuned performance';
+    } else {
+      footnote.textContent = 'Forgetting deltas show current(j→i) - baseline(i) using thresholds chosen on task i for all metrics (including AUCs)';
+    }
+  }
+
+  // Rebind hover for currently visible views
+  const tableView = document.getElementById('table-view');
+  if (tableView && tableView.classList.contains('active')) {
+    populateTable();
+  }
+  const perClassTab = document.getElementById('per-class');
+  if (perClassTab && perClassTab.classList.contains('active')) {
+    populatePerClassF1Table();
+  }
 }
