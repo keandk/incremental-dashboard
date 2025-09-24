@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Incremental Learning Results Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <h1>Incremental Learning Results Dashboard</h1>
+      <p>Comparative analysis of forgetting evaluation metrics across tasks</p>
+    </header>
+
+    <div class="calculation-info">
+      <div class="info-header">
+        <h2>📊 Forward Transfer Analysis</h2>
+        <button class="info-toggle" onclick="toggleCalculationInfo()">Show Details ▼</button>
+      </div>
+      <div class="info-content" id="calculation-info-content">
+        <div class="info-section">
+          <h3>What is Forward Transfer?</h3>
+          <p>Forward transfer measures how well a model trained on tasks 1 to i performs on future task j (> i),
+            compared to the baseline performance. This helps evaluate how well continual learning methods maintain
+            performance on new tasks.</p>
+        </div>
+
+        <div class="info-section">
+          <h3>How Deltas are Calculated</h3>
+          <div class="calculation-modes">
+            <div class="mode-card">
+              <h4>📈 Thresholded Metrics</h4>
+              <p><strong>Metrics:</strong> Precision, Recall, F1 Score</p>
+              <p><strong>Calculation:</strong> forward_transfer[i→j] - baseline[i]</p>
+              <p><strong>Interpretation:</strong> Fixed-threshold drift mode. Shows how much better/worse the forward
+                transfer prediction is compared to the original baseline using the <em>same threshold</em> from task i.
+                This isolates distribution shift effects.</p>
+            </div>
+
+            <div class="mode-card">
+              <h4>🎯 AUC Metrics</h4>
+              <p><strong>Metrics:</strong> ROC AUC, PR AUC</p>
+              <p><strong>Calculation:</strong> baseline[j] - forward_transfer[i→j]</p>
+              <p><strong>Interpretation:</strong> Gap to j-optimized mode. Shows how close the forward transfer is to
+                the performance you'd get with a model fully optimized for task j. Since AUC is threshold-invariant,
+                this measures "closeness to j-tuned baseline."</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="info-section">
+          <h3>📋 Per-Class Metrics</h3>
+          <p>The per-class table shows forward transfer for each vulnerability type's F1 score. All vulnerability
+            metrics use the fixed-threshold drift calculation to maintain consistency with how thresholds are chosen
+            during evaluation.</p>
+        </div>
+
+        <div class="info-section upcoming">
+          <h3>🔄 Coming Soon: Backward Transfer</h3>
+          <p>Backward transfer analysis (how well models trained on future tasks perform on earlier tasks) is planned
+            for a future update. This will help evaluate catastrophic forgetting from the opposite perspective.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="model-selector">
+      <label for="model-select">Select Continual Learning Strategy:</label>
+      <select id="model-select" onchange="updateCharts()">
+        <option value="replay-30">Replay-30</option>
+        <option value="replay-60">Replay-60</option>
+        <option value="ewc-2000">EWC-2000</option>
+      </select>
+    </div>
+
+    <div class="tabs">
+      <button class="tab-button active" onclick="openTab('dataset')">Dataset</button>
+      <button class="tab-button" onclick="openTab('train-config')">Train Config</button>
+      <button class="tab-button" onclick="openTab('main-metrics')">Main Metrics</button>
+      <button class="tab-button" onclick="openTab('per-class')">Per-Class Metrics</button>
+    </div>
+
+    <div id="dataset" class="tab-content">
+      <div class="table-container">
+        <h3>Dataset Timeline (Gantt)</h3>
+        <div class="dataset-stats">
+          <div class="stat">
+            <div class="stat-label">Dataset</div>
+            <div id="ds-name" class="stat-value">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Contracts</div>
+            <div id="ds-contracts" class="stat-value">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Partitions</div>
+            <div id="ds-partitions" class="stat-value">-</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Time Span</div>
+            <div id="ds-timespan" class="stat-value">-</div>
+          </div>
+        </div>
+        <div class="chart-container">
+          <canvas id="datasetChart"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div id="main-metrics" class="tab-content active">
+      <div class="view-toggle">
+        <button class="view-button active" onclick="showView('charts')">Charts View</button>
+        <button class="view-button" onclick="showView('table')">Table View</button>
+      </div>
+
+      <div id="charts-view" class="view-content active">
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <h3>Baseline Precision Metrics</h3>
+            <div class="chart-container">
+              <canvas id="precisionChart"></canvas>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <h3>Baseline Recall Metrics</h3>
+            <div class="chart-container">
+              <canvas id="recallChart"></canvas>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <h3>Baseline F1 Score Metrics</h3>
+            <div class="chart-container">
+              <canvas id="f1Chart"></canvas>
+            </div>
+          </div>
+
+          <div class="metric-card">
+            <h3>Baseline ROC AUC & PR AUC</h3>
+            <div class="chart-container">
+              <canvas id="aucChart"></canvas>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="table-view" class="view-content">
+        <div class="table-container">
+          <h3>Baseline Results Summary</h3>
+          <div class="table-wrapper">
+            <table id="metrics-table">
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  <th>Precision (Macro)</th>
+                  <th>Precision (Micro)</th>
+                  <th>Precision (Samples)</th>
+                  <th>Recall (Macro)</th>
+                  <th>Recall (Micro)</th>
+                  <th>Recall (Samples)</th>
+                  <th>F1 (Macro)</th>
+                  <th>F1 (Micro)</th>
+                  <th>F1 (Samples)</th>
+                  <th>ROC AUC<sup>*</sup></th>
+                  <th>PR AUC<sup>*</sup></th>
+                </tr>
+              </thead>
+              <tbody id="table-body">
+                <!-- Table data will be populated by JavaScript -->
+              </tbody>
+            </table>
+            <div class="table-footnote">
+              <sup>*</sup> AUC columns use "gap to j-optimized" mode (baseline[j] - forward_transfer[i→j]) to show
+              closeness to j-tuned performance
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="per-class" class="tab-content">
+      <div class="table-container">
+        <h3>Per-class F1 (Baseline) Across Tasks</h3>
+        <div class="table-wrapper">
+          <table id="per-class-f1-table">
+            <thead>
+              <tr>
+                <th>Vulnerability Type</th>
+                <th>Task 1</th>
+                <th>Task 2</th>
+                <th>Task 3</th>
+                <th>Task 4</th>
+                <th>Task 5</th>
+                <th>Task 6</th>
+                <th>Task 7</th>
+                <th>Task 8</th>
+                <th>Task 9</th>
+                <th>Average</th>
+              </tr>
+            </thead>
+            <tbody id="per-class-f1-body">
+              <!-- Populated by JavaScript -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="train-config" class="tab-content">
+      <div class="table-container">
+        <h3>Training Configuration by Strategy</h3>
+        <div class="view-toggle">
+          <button class="view-button active" onclick="showConfigView('overview')">Overview</button>
+          <button class="view-button" onclick="showConfigView('detailed')">Detailed</button>
+        </div>
+
+        <div id="overview-view" class="view-content active">
+          <div class="metrics-grid">
+            <div class="metric-card">
+              <h4>Replay-30 Configuration</h4>
+              <div class="config-summary" id="replay-30-summary">
+                <!-- Populated by JavaScript -->
+              </div>
+            </div>
+
+            <div class="metric-card">
+              <h4>Replay-60 Configuration</h4>
+              <div class="config-summary" id="replay-60-summary">
+                <!-- Populated by JavaScript -->
+              </div>
+            </div>
+
+            <div class="metric-card">
+              <h4>EWC-2000 Configuration</h4>
+              <div class="config-summary" id="ewc-2000-summary">
+                <!-- Populated by JavaScript -->
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="detailed-view" class="view-content">
+          <!-- Strategy Comparison View -->
+          <div class="config-detail" id="strategy-comparison">
+            <h4>Strategy Configuration Comparison</h4>
+            <div class="config-highlight" style="margin-bottom: 20px;">
+              <div class="highlight-title">Configuration Differences Only</div>
+              <div class="highlight-content">This view shows only the parameters that differ between strategies. Common
+                settings (model architecture, training hyperparameters, etc.) are shared across all strategies.</div>
+            </div>
+
+            <div class="config-table-container">
+              <table class="config-table">
+                <thead>
+                  <tr>
+                    <th>Strategy</th>
+                    <th>Exemplar Usage</th>
+                    <th>EWC Lambda</th>
+                    <th>Num Epochs</th>
+                    <th>Special Features</th>
+                  </tr>
+                </thead>
+                <tbody id="comparison-body">
+                  <!-- Populated by JavaScript -->
+                </tbody>
+              </table>
+            </div>
+
+            <div class="config-section" style="margin-top: 30px;">
+              <h5 style="color: #3b82f6;">📋 Common Configuration (All Strategies)</h5>
+              <div class="config-table-container">
+                <table class="config-table">
+                  <thead>
+                    <tr>
+                      <th>Category</th>
+                      <th>Setting</th>
+                      <th>Value</th>
+                    </tr>
+                  </thead>
+                  <tbody id="common-config-body">
+                    <!-- Populated by JavaScript -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Individual Strategy Details (Collapsible) -->
+          <div class="config-detail" id="replay-30-detail" style="margin-top: 40px;">
+            <h4>Replay-30 Complete Configuration</h4>
+            <div class="config-highlight" style="margin-bottom: 20px;">
+              <div class="highlight-title">Strategy Overview</div>
+              <div class="highlight-content">Replay-30 uses 30% exemplars with comprehensive model and training settings
+                optimized for continual learning</div>
+            </div>
+
+            <div class="config-section">
+              <h5 style="color: #3b82f6; margin-top: 25px; margin-bottom: 15px;">📐 Model Architecture</h5>
+              <div class="config-table-container">
+                <table class="config-table">
+                  <thead>
+                    <tr>
+                      <th>Parameter</th>
+                      <th>Value</th>
+                      <th>Description</th>
+                    </tr>
+                  </thead>
+                  <tbody id="replay-30-model-body">
+                    <!-- Model settings -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="config-section">
+              <h5 style="color: #10b981; margin-top: 25px; margin-bottom: 15px;">⚙️ Training Settings</h5>
+              <div class="config-table-container">
+                <table class="config-table">
+                  <thead>
+                    <tr>
+                      <th>Parameter</th>
+                      <th>Value</th>
+                      <th>Description</th>
+                    </tr>
+                  </thead>
+                  <tbody id="replay-30-training-body">
+                    <!-- Training settings -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="config-section">
+              <h5 style="color: #f59e0b; margin-top: 25px; margin-bottom: 15px;">🚀 Performance & Memory</h5>
+              <div class="config-table-container">
+                <table class="config-table">
+                  <thead>
+                    <tr>
+                      <th>Parameter</th>
+                      <th>Value</th>
+                      <th>Description</th>
+                    </tr>
+                  </thead>
+                  <tbody id="replay-30-performance-body">
+                    <!-- Performance settings -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="config-detail" id="replay-60-detail" style="margin-top: 40px;">
+            <h4>Replay-60 Complete Configuration</h4>
+            <div class="config-highlight" style="margin-bottom: 20px;">
+              <div class="highlight-title">Strategy Overview</div>
+              <div class="highlight-content">Replay-60 uses 60% exemplars with the same comprehensive training pipeline
+                as Replay-30</div>
+            </div>
+
+            <div class="config-section">
+              <h5 style="color: #3b82f6; margin-top: 25px; margin-bottom: 15px;">📐 Model Architecture</h5>
+              <div class="config-table-container">
+                <table class="config-table">
+                  <thead>
+                    <tr>
+                      <th>Parameter</th>
+                      <th>Value</th>
+                      <th>Description</th>
+                    </tr>
+                  </thead>
+                  <tbody id="replay-60-model-body">
+                    <!-- Model settings -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="config-section">
+              <h5 style="color: #10b981; margin-top: 25px; margin-bottom: 15px;">⚙️ Training Settings</h5>
+              <div class="config-table-container">
+                <table class="config-table">
+                  <thead>
+                    <tr>
+                      <th>Parameter</th>
+                      <th>Value</th>
+                      <th>Description</th>
+                    </tr>
+                  </thead>
+                  <tbody id="replay-60-training-body">
+                    <!-- Training settings -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="config-section">
+              <h5 style="color: #f59e0b; margin-top: 25px; margin-bottom: 15px;">🚀 Performance & Memory</h5>
+              <div class="config-table-container">
+                <table class="config-table">
+                  <thead>
+                    <tr>
+                      <th>Parameter</th>
+                      <th>Value</th>
+                      <th>Description</th>
+                    </tr>
+                  </thead>
+                  <tbody id="replay-60-performance-body">
+                    <!-- Performance settings -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <div class="config-detail" id="ewc-2000-detail" style="margin-top: 40px;">
+            <h4>EWC-2000 Complete Configuration</h4>
+            <div class="adaptive-highlight">
+              <div class="adaptive-title">🎯 Adaptive Training for Small Tasks</div>
+              <div class="adaptive-content">EWC-2000 uses intelligent adaptive training strategies that automatically
+                adjust hyperparameters based on task size to optimize performance for tasks with varying numbers of
+                samples. This ensures optimal training dynamics for both small and large tasks.</div>
+            </div>
+
+            <div class="config-section">
+              <h5 style="color: #3b82f6; margin-top: 25px; margin-bottom: 15px;">📐 Model Architecture</h5>
+              <div class="config-table-container">
+                <table class="config-table">
+                  <thead>
+                    <tr>
+                      <th>Parameter</th>
+                      <th>Value</th>
+                      <th>Description</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ewc-2000-model-body">
+                    <!-- Model settings -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="config-section">
+              <h5 style="color: #10b981; margin-top: 25px; margin-bottom: 15px;">⚙️ Training Settings</h5>
+              <div class="config-table-container">
+                <table class="config-table">
+                  <thead>
+                    <tr>
+                      <th>Parameter</th>
+                      <th>Value</th>
+                      <th>Description</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ewc-2000-training-body">
+                    <!-- Training settings -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="config-section">
+              <h5 style="color: #f59e0b; margin-top: 25px; margin-bottom: 15px;">🚀 Performance & Memory</h5>
+              <div class="config-table-container">
+                <table class="config-table">
+                  <thead>
+                    <tr>
+                      <th>Parameter</th>
+                      <th>Value</th>
+                      <th>Description</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ewc-2000-performance-body">
+                    <!-- Performance settings -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="config-section" style="margin-top: 30px;">
+              <h4 style="color: #f59e0b; border-bottom-color: #f59e0b; margin-bottom: 20px;">🎯 Adaptive Training
+                Methods</h4>
+              <div class="config-table-container">
+                <table class="config-table">
+                  <thead>
+                    <tr>
+                      <th>Method</th>
+                      <th>Implementation Logic</th>
+                      <th>Purpose</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ewc-2000-adaptive-body">
+                    <!-- Populated by JavaScript -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="config-section" style="margin-top: 30px;">
+              <h4 style="color: #10b981; border-bottom-color: #10b981; margin-bottom: 20px;">📊 Adaptive Training Rules
+                by Task Size</h4>
+              <div class="config-table-container">
+                <table class="config-table">
+                  <thead>
+                    <tr>
+                      <th>Task Size Range</th>
+                      <th>Parameter Adjustments (EWC λ, LR, Patience, Warmup, Min Epochs)</th>
+                    </tr>
+                  </thead>
+                  <tbody id="ewc-2000-rules-body">
+                    <!-- Populated by JavaScript -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+
+</html>
