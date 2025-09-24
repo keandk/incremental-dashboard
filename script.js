@@ -2370,3 +2370,10 @@ function setHoverMode(mode, toggleId) {
     populatePerClassF1Table();
   }
 }
+
+// Expose for inline onclick handlers in production environments
+// Some static hosts restrict inline handlers unless attached to window
+// Ensure availability even if bundlers wrap scope
+if (typeof window !== 'undefined') {
+  window.setHoverMode = setHoverMode;
+}
