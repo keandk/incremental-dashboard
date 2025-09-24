@@ -1826,10 +1826,15 @@ function populateTable() {
   }
 
   // Attach hover listeners depending on mode
-  if (hoverMode === 'forgetting' && forgettingData && forgettingData[currentModel] && forgettingData[currentModel].backward_transfer) {
-    attachBackwardTransferHover(tableBody, forgettingData[currentModel].backward_transfer, taskData);
+  if (hoverMode === 'on' && forgettingData && forgettingData[currentModel] && forgettingData[currentModel].backward_transfer) {
+    attachUnifiedHover(tableBody, taskData, forgettingData[currentModel].backward_transfer);
   } else {
-    attachForwardTransferHover(tableBody, taskData);
+    // Clear any existing hover handlers when hover is off
+    tableBody.removeEventListener('mouseenter', null);
+    tableBody.removeEventListener('mouseleave', null);
+    if (tableBody.dataset.unifiedHoverBound) {
+      delete tableBody.dataset.unifiedHoverBound;
+    }
   }
 }
 
@@ -1861,6 +1866,45 @@ function formatDelta(value) {
   return sign + Math.abs(value).toFixed(4);
 }
 
+function addDeltaIndicator(cell, delta, direction, transferValue) {
+  // Store original baseline value if not already stored
+  if (!cell.dataset.originalValue) {
+    cell.dataset.originalValue = cell.textContent;
+  }
+
+  // Replace cell content with the actual transfer value
+  if (typeof transferValue === 'number' && !Number.isNaN(transferValue)) {
+    cell.textContent = formatValue(transferValue);
+  }
+
+  // Remove any existing delta indicator
+  const existingDelta = cell.querySelector('.delta-indicator');
+  if (existingDelta) {
+    existingDelta.remove();
+  }
+
+  // Create new delta indicator showing the delta
+  const deltaIndicator = document.createElement('div');
+  deltaIndicator.className = 'delta-indicator';
+  deltaIndicator.textContent = formatDelta(delta);
+
+  // Set direction and sign classes
+  if (direction === 'forward') {
+    deltaIndicator.classList.add('forward');
+  } else if (direction === 'backward') {
+    deltaIndicator.classList.add('backward');
+  }
+
+  if (delta > 0) {
+    deltaIndicator.classList.add('positive');
+  } else if (delta < 0) {
+    deltaIndicator.classList.add('negative');
+  }
+
+  // Append to cell
+  cell.appendChild(deltaIndicator);
+}
+
 /**
  * Delta calculation:
  * - For thresholded metrics: forward_transfer[i -> j, metric] - baseline[i, metric]
@@ -1870,78 +1914,186 @@ function formatDelta(value) {
  * Positive: better performance, Negative: worse performance
  */
 
-function attachForwardTransferHover(tableBody, taskData) {
+function attachUnifiedHover(tableBody, taskData, backwardTransfer) {
   const rows = Array.from(tableBody.querySelectorAll('tr'));
 
-  function clearForwardDeltas() {
+  function clearAllDeltas() {
     const currentRows = Array.from(tableBody.querySelectorAll('tr'));
     currentRows.forEach(row => {
       const cells = Array.from(row.querySelectorAll('td'));
       for (let c = 1; c < cells.length; c++) {
         const td = cells[c];
-        td.classList.remove('delta-positive', 'delta-negative');
-        const baseVal = td.dataset.value;
-        if (baseVal !== undefined) {
-          const num = Number(baseVal);
-          td.textContent = formatValue(Number.isNaN(num) ? baseVal : num);
+        td.classList.remove('delta-positive', 'delta-negative', 'forward-delta', 'backward-delta');
+        // Remove any existing delta indicators
+        const existingDelta = td.querySelector('.delta-indicator');
+        if (existingDelta) {
+          existingDelta.remove();
+        }
+        // Restore original baseline value if it was stored
+        if (td.dataset.originalValue) {
+          td.textContent = td.dataset.originalValue;
+          delete td.dataset.originalValue;
+        } else {
+          // Fallback to dataset value
+          const baseVal = td.dataset.value;
+          if (baseVal !== undefined) {
+            const num = Number(baseVal);
+            td.textContent = formatValue(Number.isNaN(num) ? baseVal : num);
+          }
         }
       }
     });
   }
 
-  function applyForwardDeltas(hoverTaskIndex) {
+  function applyUnifiedDeltas(hoverTaskIndex) {
+    if (hoverMode !== 'on') {
+      return; // Only show deltas when hover mode is on
+    }
+
     // Ensure clean slate
-    clearForwardDeltas();
+    clearAllDeltas();
 
     const hoverKey = String(hoverTaskIndex);
-    const hoverTask = taskData[hoverKey];
-    if (!hoverTask || !hoverTask.forward_transfer) return;
 
-    // For each subsequent row j > i
-    for (let j = hoverTaskIndex + 1; j <= 9; j++) {
-      const row = rows[j - 1]; // rows are 1-indexed by task
-      if (!row) continue;
-      const forwardForJ = hoverTask.forward_transfer[String(j)];
-      if (!forwardForJ) continue;
+    // Special handling for task 1: show only forward deltas
+    if (hoverTaskIndex === 1) {
+      if (taskData[hoverKey] && taskData[hoverKey].forward_transfer) {
+        for (let j = hoverTaskIndex + 1; j <= 9; j++) {
+          const row = rows[j - 1];
+          if (!row) continue;
+          const forwardForJ = taskData[hoverKey].forward_transfer[String(j)];
+          if (!forwardForJ) continue;
 
-      const cells = Array.from(row.querySelectorAll('td'));
-      // cells[0] is Task label; metrics start from 1 aligned with METRIC_COLUMN_KEYS
-      for (let col = 0; col < METRIC_COLUMN_KEYS.length; col++) {
-        const td = cells[col + 1];
-        if (!td) continue;
-        const metricKey = METRIC_COLUMN_KEYS[col];
-        const fwdVal = forwardForJ[metricKey];
+          const cells = Array.from(row.querySelectorAll('td'));
+          for (let col = 0; col < METRIC_COLUMN_KEYS.length; col++) {
+            const td = cells[col + 1];
+            if (!td) continue;
+            const metricKey = METRIC_COLUMN_KEYS[col];
+            const fwdVal = forwardForJ[metricKey];
 
-        // For AUC metrics, compare with baseline at task j (gap to j-optimized)
-        // For thresholded metrics, use fixed-threshold drift (compare with baseline at task i)
-        let baseVal;
-        let delta;
-        if (metricKey === 'roc_auc_macro' || metricKey === 'pr_auc_macro') {
-          // AUC mode: gap to j-optimized
-          const taskJBaseline = taskData[String(j)]?.baseline;
-          baseVal = taskJBaseline ? taskJBaseline[metricKey] : NaN;
-          delta = baseVal - fwdVal; // Negative means forward is better (smaller gap)
-        } else {
-          // Fixed-threshold mode: drift from i baseline
-          const taskIBaseline = taskData[hoverKey]?.baseline;
-          baseVal = taskIBaseline ? taskIBaseline[metricKey] : NaN;
-          delta = fwdVal - baseVal;
-        }
+            let baseVal;
+            let delta;
+            if (metricKey === 'roc_auc_macro' || metricKey === 'pr_auc_macro') {
+              const taskJBaseline = taskData[String(j)]?.baseline;
+              baseVal = taskJBaseline ? taskJBaseline[metricKey] : NaN;
+              delta = baseVal - fwdVal;
+            } else {
+              const taskIBaseline = taskData[hoverKey]?.baseline;
+              baseVal = taskIBaseline ? taskIBaseline[metricKey] : NaN;
+              delta = fwdVal - baseVal;
+            }
 
-        if (typeof fwdVal === 'number' && typeof baseVal === 'number' && !Number.isNaN(baseVal)) {
-          td.textContent = formatDelta(delta);
-          if (delta > 0) {
-            td.classList.add('delta-positive');
-            td.classList.remove('delta-negative');
-          } else if (delta < 0) {
-            td.classList.add('delta-negative');
-            td.classList.remove('delta-positive');
-          } else {
-            td.classList.remove('delta-positive', 'delta-negative');
+            if (typeof fwdVal === 'number' && typeof baseVal === 'number' && !Number.isNaN(baseVal)) {
+              // Add delta indicator and update cell with transfer value
+              addDeltaIndicator(td, delta, 'forward', fwdVal);
+            }
           }
-        } else {
-          td.textContent = 'N/A';
-          td.classList.remove('delta-positive', 'delta-negative');
+        }
+      }
+      return; // Exit early for task 1
+    }
+
+    // Special handling for task 9: show only backward deltas
+    if (hoverTaskIndex === 9) {
+      if (backwardTransfer && backwardTransfer[hoverKey] && backwardTransfer[hoverKey].previous_tasks) {
+        for (let i = 1; i < hoverTaskIndex; i++) {
+          const row = rows[i - 1];
+          if (!row) continue;
+          const prevTaskEntry = backwardTransfer[hoverKey].previous_tasks[String(i)];
+          if (!prevTaskEntry) continue;
+
+          const cells = Array.from(row.querySelectorAll('td'));
+          for (let col = 0; col < METRIC_COLUMN_KEYS.length; col++) {
+            const td = cells[col + 1];
+            if (!td) continue;
+            const metricKey = METRIC_COLUMN_KEYS[col];
+
+            let delta;
+            if (prevTaskEntry.current && prevTaskEntry.baseline &&
+              typeof prevTaskEntry.current[metricKey] === 'number' &&
+              typeof prevTaskEntry.baseline[metricKey] === 'number') {
+              delta = prevTaskEntry.current[metricKey] - prevTaskEntry.baseline[metricKey];
+            } else if (prevTaskEntry.delta && typeof prevTaskEntry.delta[metricKey] === 'number') {
+              delta = prevTaskEntry.delta[metricKey];
+            }
+
+            if (typeof delta === 'number' && !Number.isNaN(delta)) {
+              // Calculate the current transfer value
+              const currentVal = prevTaskEntry.current ? prevTaskEntry.current[metricKey] : null;
+              // Add delta indicator and update cell with transfer value
+              addDeltaIndicator(td, delta, 'backward', currentVal);
+            }
+          }
+        }
+      }
+      return; // Exit early for task 9
+    }
+
+    // Tasks 2-8: show both forward and backward deltas
+    // Apply forward deltas (from hoverTask to later tasks)
+    if (taskData[hoverKey] && taskData[hoverKey].forward_transfer) {
+      for (let j = hoverTaskIndex + 1; j <= 9; j++) {
+        const row = rows[j - 1];
+        if (!row) continue;
+        const forwardForJ = taskData[hoverKey].forward_transfer[String(j)];
+        if (!forwardForJ) continue;
+
+        const cells = Array.from(row.querySelectorAll('td'));
+        for (let col = 0; col < METRIC_COLUMN_KEYS.length; col++) {
+          const td = cells[col + 1];
+          if (!td) continue;
+          const metricKey = METRIC_COLUMN_KEYS[col];
+          const fwdVal = forwardForJ[metricKey];
+
+          let baseVal;
+          let delta;
+          if (metricKey === 'roc_auc_macro' || metricKey === 'pr_auc_macro') {
+            const taskJBaseline = taskData[String(j)]?.baseline;
+            baseVal = taskJBaseline ? taskJBaseline[metricKey] : NaN;
+            delta = baseVal - fwdVal;
+          } else {
+            const taskIBaseline = taskData[hoverKey]?.baseline;
+            baseVal = taskIBaseline ? taskIBaseline[metricKey] : NaN;
+            delta = fwdVal - baseVal;
+          }
+
+          if (typeof fwdVal === 'number' && typeof baseVal === 'number' && !Number.isNaN(baseVal)) {
+            // Add delta indicator and update cell with transfer value
+            addDeltaIndicator(td, delta, 'forward', fwdVal);
+          }
+        }
+      }
+    }
+
+    // Apply backward deltas (from later tasks to hoverTask)
+    if (backwardTransfer && backwardTransfer[hoverKey] && backwardTransfer[hoverKey].previous_tasks) {
+      for (let i = 1; i < hoverTaskIndex; i++) {
+        const row = rows[i - 1];
+        if (!row) continue;
+        const prevTaskEntry = backwardTransfer[hoverKey].previous_tasks[String(i)];
+        if (!prevTaskEntry) continue;
+
+        const cells = Array.from(row.querySelectorAll('td'));
+        for (let col = 0; col < METRIC_COLUMN_KEYS.length; col++) {
+          const td = cells[col + 1];
+          if (!td) continue;
+          const metricKey = METRIC_COLUMN_KEYS[col];
+
+          let delta;
+          if (prevTaskEntry.current && prevTaskEntry.baseline &&
+            typeof prevTaskEntry.current[metricKey] === 'number' &&
+            typeof prevTaskEntry.baseline[metricKey] === 'number') {
+            delta = prevTaskEntry.current[metricKey] - prevTaskEntry.baseline[metricKey];
+          } else if (prevTaskEntry.delta && typeof prevTaskEntry.delta[metricKey] === 'number') {
+            delta = prevTaskEntry.delta[metricKey];
+          }
+
+          if (typeof delta === 'number' && !Number.isNaN(delta)) {
+            // Calculate the current transfer value
+            const currentVal = prevTaskEntry.current ? prevTaskEntry.current[metricKey] : null;
+            // Add delta indicator and update cell with transfer value
+            addDeltaIndicator(td, delta, 'backward', currentVal);
+          }
         }
       }
     }
@@ -1950,88 +2102,186 @@ function attachForwardTransferHover(tableBody, taskData) {
   // Bind listeners
   rows.forEach(row => {
     row.addEventListener('mouseenter', () => {
-      if (hoverMode !== 'forward') return;
+      if (hoverMode !== 'on') return;
       const taskIndex = Number(row.dataset.task);
       if (!Number.isNaN(taskIndex)) {
-        applyForwardDeltas(taskIndex);
+        applyUnifiedDeltas(taskIndex);
       }
     });
   });
 
-  if (!tableBody.dataset.forwardHoverBound) {
+  if (!tableBody.dataset.unifiedHoverBound) {
     tableBody.addEventListener('mouseleave', () => {
-      clearForwardDeltas();
+      clearAllDeltas();
     });
-    tableBody.dataset.forwardHoverBound = '1';
+    tableBody.dataset.unifiedHoverBound = '1';
   }
 }
 
-function attachPerClassForwardHover(tableBody, taskData) {
+function attachPerClassUnifiedHover(tableBody, taskData, backwardTransfer) {
   const rows = Array.from(tableBody.querySelectorAll('tr'));
-  // Headers remain uncolored; we only color data cells
 
   function clearPerClassDeltas() {
     const currentRows = Array.from(tableBody.querySelectorAll('tr'));
     currentRows.forEach(row => {
       const cells = Array.from(row.querySelectorAll('td'));
-      // skip first column (vulnerability label) and last column (avg)
       for (let c = 1; c < cells.length - 1; c++) {
         const td = cells[c];
-        td.classList.remove('delta-positive', 'delta-negative');
-        const baseVal = td.dataset.value;
-        if (baseVal !== undefined) {
-          const num = Number(baseVal);
-          td.textContent = formatValue(Number.isNaN(num) ? baseVal : num);
+        td.classList.remove('delta-positive', 'delta-negative', 'forward-delta', 'backward-delta');
+        // Remove any existing delta indicators
+        const existingDelta = td.querySelector('.delta-indicator');
+        if (existingDelta) {
+          existingDelta.remove();
+        }
+        // Restore original baseline value if it was stored
+        if (td.dataset.originalValue) {
+          td.textContent = td.dataset.originalValue;
+          delete td.dataset.originalValue;
+        } else {
+          // Fallback to dataset value
+          const baseVal = td.dataset.value;
+          if (baseVal !== undefined) {
+            const num = Number(baseVal);
+            td.textContent = formatValue(Number.isNaN(num) ? baseVal : num);
+          }
         }
       }
     });
-    // no-op for headers
   }
 
-  function applyPerClassDeltas(hoverTaskIndex) {
+  function applyPerClassUnifiedDeltas(hoverTaskIndex) {
+    if (hoverMode !== 'on') {
+      return;
+    }
+
     clearPerClassDeltas();
     const hoverKey = String(hoverTaskIndex);
-    const hoverTask = taskData[hoverKey];
-    if (!hoverTask || !hoverTask.forward_transfer) return;
 
-    // We do not color headers; only cells
+    // Special handling for task 1: show only forward deltas
+    if (hoverTaskIndex === 1) {
+      if (taskData[hoverKey] && taskData[hoverKey].forward_transfer) {
+        for (let j = hoverTaskIndex + 1; j <= 9; j++) {
+          rows.forEach(vRow => {
+            const cells = Array.from(vRow.querySelectorAll('td'));
+            const td = cells[j];
+            if (!td) return;
+            const vulnType = td.dataset.vuln;
+            if (!vulnType) return;
 
-    for (let j = hoverTaskIndex + 1; j <= 9; j++) {
-      // Iterate all vulnerability rows
-      rows.forEach(vRow => {
-        const cells = Array.from(vRow.querySelectorAll('td'));
-        // vulnerability label at index 0, tasks 1..9, avg last
-        const td = cells[j];
-        if (!td) return;
-        const vulnType = td.dataset.vuln;
-        if (!vulnType) return;
+            const forwardForJ = taskData[hoverKey].forward_transfer[String(j)];
+            if (!forwardForJ) return;
 
-        const forwardForJ = hoverTask.forward_transfer[String(j)];
-        if (!forwardForJ) return;
+            const metricKey = `f1_${vulnType}`;
+            const fwdVal = forwardForJ[metricKey];
+            const taskIBaseline = taskData[hoverKey]?.baseline;
+            const baseVal = taskIBaseline ? taskIBaseline[metricKey] : NaN;
 
-        const metricKey = `f1_${vulnType}`;
-        const fwdVal = forwardForJ[metricKey];
-        // Fixed-threshold drift: anchor to hovered task i baseline for this vulnerability
-        const taskIBaseline = taskData[hoverKey]?.baseline;
-        const baseVal = taskIBaseline ? taskIBaseline[metricKey] : NaN;
-        if (typeof fwdVal === 'number' && typeof baseVal === 'number' && !Number.isNaN(baseVal)) {
-          const delta = fwdVal - baseVal;
-          td.textContent = formatDelta(delta);
-          if (delta > 0) {
-            td.classList.add('delta-positive');
-            td.classList.remove('delta-negative');
-          } else if (delta < 0) {
-            td.classList.add('delta-negative');
-            td.classList.remove('delta-positive');
-          } else {
-            td.classList.remove('delta-positive', 'delta-negative');
-          }
-        } else {
-          td.textContent = 'N/A';
-          td.classList.remove('delta-positive', 'delta-negative');
+            if (typeof fwdVal === 'number' && typeof baseVal === 'number' && !Number.isNaN(baseVal)) {
+              const delta = fwdVal - baseVal;
+              // Add delta indicator instead of replacing content
+              addDeltaIndicator(td, delta, 'forward');
+            }
+          });
         }
-      });
-      // headers unchanged
+      }
+      return; // Exit early for task 1
+    }
+
+    // Special handling for task 9: show only backward deltas
+    if (hoverTaskIndex === 9) {
+      if (backwardTransfer && backwardTransfer[hoverKey] && backwardTransfer[hoverKey].previous_tasks) {
+        for (let i = 1; i < hoverTaskIndex; i++) {
+          rows.forEach(vRow => {
+            const cells = Array.from(vRow.querySelectorAll('td'));
+            const td = cells[i];
+            if (!td) return;
+            const vulnType = td.dataset.vuln;
+            if (!vulnType) return;
+
+            const prevTaskEntry = backwardTransfer[hoverKey].previous_tasks[String(i)];
+            if (!prevTaskEntry) return;
+
+            const metricKey = `f1_${vulnType}`;
+            let delta;
+            if (prevTaskEntry.current && prevTaskEntry.baseline &&
+              typeof prevTaskEntry.current[metricKey] === 'number' &&
+              typeof prevTaskEntry.baseline[metricKey] === 'number') {
+              delta = prevTaskEntry.current[metricKey] - prevTaskEntry.baseline[metricKey];
+            } else if (prevTaskEntry.delta && typeof prevTaskEntry.delta[metricKey] === 'number') {
+              delta = prevTaskEntry.delta[metricKey];
+            }
+
+            if (typeof delta === 'number' && !Number.isNaN(delta)) {
+              // Calculate the current transfer value
+              const currentVal = prevTaskEntry.current ? prevTaskEntry.current[metricKey] : null;
+              // Add delta indicator and update cell with transfer value
+              addDeltaIndicator(td, delta, 'backward', currentVal);
+            }
+          });
+        }
+      }
+      return; // Exit early for task 9
+    }
+
+    // Tasks 2-8: show both forward and backward deltas
+    // Apply forward deltas (from hoverTask to later tasks)
+    if (taskData[hoverKey] && taskData[hoverKey].forward_transfer) {
+      for (let j = hoverTaskIndex + 1; j <= 9; j++) {
+        rows.forEach(vRow => {
+          const cells = Array.from(vRow.querySelectorAll('td'));
+          const td = cells[j];
+          if (!td) return;
+          const vulnType = td.dataset.vuln;
+          if (!vulnType) return;
+
+          const forwardForJ = taskData[hoverKey].forward_transfer[String(j)];
+          if (!forwardForJ) return;
+
+          const metricKey = `f1_${vulnType}`;
+          const fwdVal = forwardForJ[metricKey];
+          const taskIBaseline = taskData[hoverKey]?.baseline;
+          const baseVal = taskIBaseline ? taskIBaseline[metricKey] : NaN;
+
+          if (typeof fwdVal === 'number' && typeof baseVal === 'number' && !Number.isNaN(baseVal)) {
+            const delta = fwdVal - baseVal;
+            // Add delta indicator and update cell with transfer value
+            addDeltaIndicator(td, delta, 'forward', fwdVal);
+          }
+        });
+      }
+    }
+
+    // Apply backward deltas (from later tasks to hoverTask)
+    if (backwardTransfer && backwardTransfer[hoverKey] && backwardTransfer[hoverKey].previous_tasks) {
+      for (let i = 1; i < hoverTaskIndex; i++) {
+        rows.forEach(vRow => {
+          const cells = Array.from(vRow.querySelectorAll('td'));
+          const td = cells[i];
+          if (!td) return;
+          const vulnType = td.dataset.vuln;
+          if (!vulnType) return;
+
+          const prevTaskEntry = backwardTransfer[hoverKey].previous_tasks[String(i)];
+          if (!prevTaskEntry) return;
+
+          const metricKey = `f1_${vulnType}`;
+          let delta;
+          if (prevTaskEntry.current && prevTaskEntry.baseline &&
+            typeof prevTaskEntry.current[metricKey] === 'number' &&
+            typeof prevTaskEntry.baseline[metricKey] === 'number') {
+            delta = prevTaskEntry.current[metricKey] - prevTaskEntry.baseline[metricKey];
+          } else if (prevTaskEntry.delta && typeof prevTaskEntry.delta[metricKey] === 'number') {
+            delta = prevTaskEntry.delta[metricKey];
+          }
+
+          if (typeof delta === 'number' && !Number.isNaN(delta)) {
+            // Calculate the current transfer value
+            const currentVal = prevTaskEntry.current ? prevTaskEntry.current[metricKey] : null;
+            // Add delta indicator and update cell with transfer value
+            addDeltaIndicator(td, delta, 'backward', currentVal);
+          }
+        });
+      }
     }
   }
 
@@ -2042,20 +2292,20 @@ function attachPerClassForwardHover(tableBody, taskData) {
       const td = cells[c];
       if (!td) continue;
       td.addEventListener('mouseenter', () => {
-        if (hoverMode !== 'forward') return;
+        if (hoverMode !== 'on') return;
         const taskIndex = Number(td.dataset.task);
         if (!Number.isNaN(taskIndex)) {
-          applyPerClassDeltas(taskIndex);
+          applyPerClassUnifiedDeltas(taskIndex);
         }
       });
     }
   });
 
-  if (!tableBody.dataset.perClassHoverBound) {
+  if (!tableBody.dataset.perClassUnifiedHoverBound) {
     tableBody.addEventListener('mouseleave', () => {
       clearPerClassDeltas();
     });
-    tableBody.dataset.perClassHoverBound = '1';
+    tableBody.dataset.perClassUnifiedHoverBound = '1';
   }
 }
 
@@ -2069,10 +2319,22 @@ function attachBackwardTransferHover(tableBody, backwardTransfer, taskData) {
       for (let c = 1; c < cells.length; c++) {
         const td = cells[c];
         td.classList.remove('delta-positive', 'delta-negative');
-        const baseVal = td.dataset.value;
-        if (baseVal !== undefined) {
-          const num = Number(baseVal);
-          td.textContent = formatValue(Number.isNaN(num) ? baseVal : num);
+        // Remove any existing delta indicators
+        const existingDelta = td.querySelector('.delta-indicator');
+        if (existingDelta) {
+          existingDelta.remove();
+        }
+        // Restore original baseline value if it was stored
+        if (td.dataset.originalValue) {
+          td.textContent = td.dataset.originalValue;
+          delete td.dataset.originalValue;
+        } else {
+          // Fallback to dataset value
+          const baseVal = td.dataset.value;
+          if (baseVal !== undefined) {
+            const num = Number(baseVal);
+            td.textContent = formatValue(Number.isNaN(num) ? baseVal : num);
+          }
         }
       }
     });
@@ -2108,19 +2370,10 @@ function attachBackwardTransferHover(tableBody, backwardTransfer, taskData) {
         }
 
         if (typeof delta === 'number' && !Number.isNaN(delta)) {
-          td.textContent = formatDelta(delta);
-          if (delta > 0) {
-            td.classList.add('delta-positive');
-            td.classList.remove('delta-negative');
-          } else if (delta < 0) {
-            td.classList.add('delta-negative');
-            td.classList.remove('delta-positive');
-          } else {
-            td.classList.remove('delta-positive', 'delta-negative');
-          }
-        } else {
-          td.textContent = 'N/A';
-          td.classList.remove('delta-positive', 'delta-negative');
+          // Calculate the current transfer value
+          const currentVal = prevTaskEntry.current ? prevTaskEntry.current[metricKey] : null;
+          // Add delta indicator and update cell with transfer value
+          addDeltaIndicator(td, delta, 'backward', currentVal);
         }
       }
     }
@@ -2213,10 +2466,15 @@ function populatePerClassF1Table() {
     tableBody.appendChild(row);
   });
 
-  if (hoverMode === 'forgetting' && forgettingData && forgettingData[currentModel] && forgettingData[currentModel].backward_transfer) {
-    attachPerClassBackwardHover(tableBody, forgettingData[currentModel].backward_transfer);
+  if (hoverMode === 'on' && forgettingData && forgettingData[currentModel] && forgettingData[currentModel].backward_transfer) {
+    attachPerClassUnifiedHover(tableBody, taskData, forgettingData[currentModel].backward_transfer);
   } else {
-    attachPerClassForwardHover(tableBody, taskData);
+    // Clear any existing hover handlers when hover is off
+    tableBody.removeEventListener('mouseenter', null);
+    tableBody.removeEventListener('mouseleave', null);
+    if (tableBody.dataset.perClassUnifiedHoverBound) {
+      delete tableBody.dataset.perClassUnifiedHoverBound;
+    }
   }
 }
 
@@ -2277,10 +2535,22 @@ function attachPerClassBackwardHover(tableBody, backwardTransfer) {
       for (let c = 1; c < cells.length - 1; c++) {
         const td = cells[c];
         td.classList.remove('delta-positive', 'delta-negative');
-        const baseVal = td.dataset.value;
-        if (baseVal !== undefined) {
-          const num = Number(baseVal);
-          td.textContent = formatValue(Number.isNaN(num) ? baseVal : num);
+        // Remove any existing delta indicators
+        const existingDelta = td.querySelector('.delta-indicator');
+        if (existingDelta) {
+          existingDelta.remove();
+        }
+        // Restore original baseline value if it was stored
+        if (td.dataset.originalValue) {
+          td.textContent = td.dataset.originalValue;
+          delete td.dataset.originalValue;
+        } else {
+          // Fallback to dataset value
+          const baseVal = td.dataset.value;
+          if (baseVal !== undefined) {
+            const num = Number(baseVal);
+            td.textContent = formatValue(Number.isNaN(num) ? baseVal : num);
+          }
         }
       }
     });
@@ -2315,19 +2585,10 @@ function attachPerClassBackwardHover(tableBody, backwardTransfer) {
         }
 
         if (typeof delta === 'number' && !Number.isNaN(delta)) {
-          td.textContent = formatDelta(delta);
-          if (delta > 0) {
-            td.classList.add('delta-positive');
-            td.classList.remove('delta-negative');
-          } else if (delta < 0) {
-            td.classList.add('delta-negative');
-            td.classList.remove('delta-positive');
-          } else {
-            td.classList.remove('delta-positive', 'delta-negative');
-          }
-        } else {
-          td.textContent = 'N/A';
-          td.classList.remove('delta-positive', 'delta-negative');
+          // Calculate the current transfer value
+          const currentVal = prevTaskEntry.current ? prevTaskEntry.current[metricKey] : null;
+          // Add delta indicator and update cell with transfer value
+          addDeltaIndicator(td, delta, 'backward', currentVal);
         }
       }
     });
@@ -2359,22 +2620,23 @@ function attachPerClassBackwardHover(tableBody, backwardTransfer) {
 
 function setHoverMode(mode, toggleId) {
   hoverMode = mode;
+
   // Toggle button active state in all hover toggles
   const toggleContainers = document.querySelectorAll('.hover-toggle');
   toggleContainers.forEach(container => {
     const buttons = container.querySelectorAll('.hover-button');
     buttons.forEach(btn => btn.classList.remove('active'));
-    const toActivate = Array.from(buttons).find(b => b.textContent.toLowerCase().includes(mode === 'forward' ? 'forward' : 'forgetting'));
+    const toActivate = Array.from(buttons).find(b => b.textContent.toLowerCase().includes(mode));
     if (toActivate) toActivate.classList.add('active');
   });
 
   // Update footnote text
   const footnote = document.getElementById('table-footnote-text');
   if (footnote) {
-    if (hoverMode === 'forward') {
-      footnote.textContent = 'AUC columns use "gap to j-optimized" mode (baseline[j] - forward_transfer[i→j]) to show closeness to j-tuned performance';
+    if (hoverMode === 'on') {
+      footnote.textContent = 'Hover any task to see transfer deltas (Task 1: forward only, Tasks 2-8: both, Task 9: backward only)';
     } else {
-      footnote.textContent = 'Forgetting deltas show current(j→i) - baseline(i) using thresholds chosen on task i for all metrics (including AUCs)';
+      footnote.textContent = 'Hover mode is disabled';
     }
   }
 

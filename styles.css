@@ -424,6 +424,7 @@ canvas {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  position: relative;
 }
 
 #metrics-table tr:nth-child(even) td:not(.delta-positive):not(.delta-negative),
@@ -443,6 +444,41 @@ canvas {
   font-weight: 600;
   color: #1e293b;
   background: #e0e7ff;
+}
+
+/* Delta indicator styling */
+.delta-indicator {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 1px 3px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid;
+  z-index: 10;
+  line-height: 1;
+}
+
+.delta-indicator.positive {
+  color: #166534;
+  border-color: #16a34a;
+  background: rgba(220, 252, 231, 0.9);
+}
+
+.delta-indicator.negative {
+  color: #991b1b;
+  border-color: #dc2626;
+  background: rgba(254, 226, 226, 0.9);
+}
+
+.delta-indicator.forward {
+  border-left: 2px solid #3b82f6;
+}
+
+.delta-indicator.backward {
+  border-right: 2px solid #ef4444;
 }
 
 #metrics-table .high-score {
@@ -485,6 +521,33 @@ canvas {
   /* red-100 */
 }
 
+/* Forward and backward delta distinction */
+.forward-delta {
+  border-left: 2px solid #3b82f6;
+  /* blue left border for forward */
+}
+
+.backward-delta {
+  border-right: 2px solid #ef4444;
+  /* red right border for backward */
+}
+
+.forward-delta.delta-positive {
+  background: linear-gradient(90deg, #3b82f6 0%, #3b82f6 2px, #dcfce7 2px, #dcfce7 100%);
+}
+
+.backward-delta.delta-positive {
+  background: linear-gradient(90deg, #dcfce7 0%, #dcfce7 calc(100% - 2px), #ef4444 calc(100% - 2px), #ef4444 100%);
+}
+
+.forward-delta.delta-negative {
+  background: linear-gradient(90deg, #3b82f6 0%, #3b82f6 2px, #fee2e2 2px, #fee2e2 100%);
+}
+
+.backward-delta.delta-negative {
+  background: linear-gradient(90deg, #fee2e2 0%, #fee2e2 calc(100% - 2px), #ef4444 calc(100% - 2px), #ef4444 100%);
+}
+
 @media (prefers-color-scheme: dark) {
   #metrics-table .delta-positive {
     background-color: #166534;
@@ -505,6 +568,31 @@ canvas {
   #per-class-f1-table .delta-negative {
     background-color: #991b1b;
     /* red-800 */
+  }
+
+  /* Forward and backward delta distinction (dark) */
+  .forward-delta {
+    border-left-color: #60a5fa;
+  }
+
+  .backward-delta {
+    border-right-color: #f87171;
+  }
+
+  .forward-delta.delta-positive {
+    background: linear-gradient(90deg, #60a5fa 0%, #60a5fa 2px, #166534 2px, #166534 100%);
+  }
+
+  .backward-delta.delta-positive {
+    background: linear-gradient(90deg, #166534 0%, #166534 calc(100% - 2px), #f87171 calc(100% - 2px), #f87171 100%);
+  }
+
+  .forward-delta.delta-negative {
+    background: linear-gradient(90deg, #60a5fa 0%, #60a5fa 2px, #991b1b 2px, #991b1b 100%);
+  }
+
+  .backward-delta.delta-negative {
+    background: linear-gradient(90deg, #991b1b 0%, #991b1b calc(100% - 2px), #f87171 calc(100% - 2px), #f87171 100%);
   }
 }
 
@@ -1242,6 +1330,31 @@ canvas {
     line-height: 1.5 !important;
     white-space: pre-line !important;
     z-index: 9999 !important;
+  }
+
+  /* Dark mode delta indicators */
+  .delta-indicator {
+    background: rgba(30, 41, 59, 0.9);
+  }
+
+  .delta-indicator.positive {
+    color: #bbf7d0;
+    border-color: #4ade80;
+    background: rgba(22, 101, 52, 0.9);
+  }
+
+  .delta-indicator.negative {
+    color: #fecaca;
+    border-color: #f87171;
+    background: rgba(153, 27, 27, 0.9);
+  }
+
+  .delta-indicator.forward {
+    border-left-color: #60a5fa;
+  }
+
+  .delta-indicator.backward {
+    border-right-color: #f87171;
   }
 }
 

@@ -69,9 +69,11 @@
           <p><strong>Delta Calculation:</strong> For all metrics (including AUCs), compute
             <code>current<sub>j→i</sub> - baseline<sub>i</sub></code> using task i thresholds.
           </p>
-          <p><strong>Hover behavior:</strong> In Table View, hover over row "Task j" to highlight the deltas applied to
-            all previous rows i < j. In Per-Class view, hover any Task j column to see per-class F1 deltas for all i <
-              j.</p>
+          <p><strong>Hover behavior:</strong> When hover mode is ON, hover over any task to see transfer deltas:
+            <em>Task 1:</em> Forward transfer only (to later tasks),
+            <em>Tasks 2-8:</em> Both forward and backward transfer,
+            <em>Task 9:</em> Backward transfer only (from earlier tasks).
+          </p>
         </div>
       </div>
     </div>
@@ -160,10 +162,8 @@
       <div id="table-view" class="view-content">
         <div class="hover-toggle" id="hover-toggle-main">
           <span class="toggle-label">Hover Mode:</span>
-          <button class="hover-button active" onclick="setHoverMode('forward', 'hover-toggle-main')">Forward
-            Transfer</button>
-          <button class="hover-button" onclick="setHoverMode('forgetting', 'hover-toggle-main')">Forgetting
-            (BWT)</button>
+          <button class="hover-button active" onclick="setHoverMode('on', 'hover-toggle-main')">ON</button>
+          <button class="hover-button" onclick="setHoverMode('off', 'hover-toggle-main')">OFF</button>
         </div>
         <div class="table-container">
           <h3>Baseline Results Summary</h3>
@@ -190,8 +190,8 @@
               </tbody>
             </table>
             <div class="table-footnote">
-              <sup>*</sup> <span id="table-footnote-text">AUC columns use "gap to j-optimized" mode (baseline[j] -
-                forward_transfer[i→j]) to show closeness to j-tuned performance</span>
+              <sup>*</sup> <span id="table-footnote-text">When hover is ON, hover any task to see transfer deltas (Task
+                1: forward only, Tasks 2-8: both, Task 9: backward only)</span>
             </div>
           </div>
         </div>
@@ -201,10 +201,8 @@
     <div id="per-class" class="tab-content">
       <div class="hover-toggle" id="hover-toggle-perclass" style="margin-bottom: 12px;">
         <span class="toggle-label">Hover Mode:</span>
-        <button class="hover-button active" onclick="setHoverMode('forward', 'hover-toggle-perclass')">Forward
-          Transfer</button>
-        <button class="hover-button" onclick="setHoverMode('forgetting', 'hover-toggle-perclass')">Forgetting
-          (BWT)</button>
+        <button class="hover-button active" onclick="setHoverMode('on', 'hover-toggle-perclass')">ON</button>
+        <button class="hover-button" onclick="setHoverMode('off', 'hover-toggle-perclass')">OFF</button>
       </div>
       <div class="table-container">
         <h3>Per-class F1 (Baseline) Across Tasks</h3>
