@@ -2371,9 +2371,7 @@ function setHoverMode(mode, toggleId) {
   }
 }
 
-// Expose for inline onclick handlers in production environments
-// Some static hosts restrict inline handlers unless attached to window
-// Ensure availability even if bundlers wrap scope
+// Ensure availability for inline onclick on static hosts (e.g., GitHub Pages)
 if (typeof window !== 'undefined') {
   window.setHoverMode = setHoverMode;
 }
