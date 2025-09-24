@@ -1923,8 +1923,8 @@ function attachForwardTransferHover(tableBody, taskData) {
           delta = baseVal - fwdVal; // Negative means forward is better (smaller gap)
         } else {
           // Fixed-threshold mode: drift from i baseline
-          const baseValStr = td.dataset.value;
-          baseVal = baseValStr !== undefined ? Number(baseValStr) : NaN;
+          const taskIBaseline = taskData[hoverKey]?.baseline;
+          baseVal = taskIBaseline ? taskIBaseline[metricKey] : NaN;
           delta = fwdVal - baseVal;
         }
 
@@ -2010,9 +2010,10 @@ function attachPerClassForwardHover(tableBody, taskData) {
         if (!forwardForJ) return;
 
         const metricKey = `f1_${vulnType}`;
-        const baseValStr = td.dataset.value;
-        const baseVal = baseValStr !== undefined ? Number(baseValStr) : NaN;
         const fwdVal = forwardForJ[metricKey];
+        // Fixed-threshold drift: anchor to hovered task i baseline for this vulnerability
+        const taskIBaseline = taskData[hoverKey]?.baseline;
+        const baseVal = taskIBaseline ? taskIBaseline[metricKey] : NaN;
         if (typeof fwdVal === 'number' && typeof baseVal === 'number' && !Number.isNaN(baseVal)) {
           const delta = fwdVal - baseVal;
           td.textContent = formatDelta(delta);
@@ -2088,17 +2089,25 @@ function attachBackwardTransferHover(tableBody, backwardTransfer, taskData) {
       const row = rows[i - 1];
       if (!row) continue;
       const prevTaskEntry = bwdForJ.previous_tasks[String(i)];
-      if (!prevTaskEntry || !prevTaskEntry.current || !prevTaskEntry.baseline) continue;
+      if (!prevTaskEntry) continue;
 
       const cells = Array.from(row.querySelectorAll('td'));
       for (let col = 0; col < METRIC_COLUMN_KEYS.length; col++) {
         const td = cells[col + 1];
         if (!td) continue;
         const metricKey = METRIC_COLUMN_KEYS[col];
-        const curVal = prevTaskEntry.current[metricKey];
-        const baseVal = prevTaskEntry.baseline[metricKey];
-        if (typeof curVal === 'number' && typeof baseVal === 'number') {
-          const delta = curVal - baseVal;
+        const hasCurrent = prevTaskEntry.current && typeof prevTaskEntry.current[metricKey] === 'number';
+        const hasBaseline = prevTaskEntry.baseline && typeof prevTaskEntry.baseline[metricKey] === 'number';
+        const hasDelta = prevTaskEntry.delta && typeof prevTaskEntry.delta[metricKey] === 'number';
+
+        let delta;
+        if (hasCurrent && hasBaseline) {
+          delta = prevTaskEntry.current[metricKey] - prevTaskEntry.baseline[metricKey];
+        } else if (hasDelta) {
+          delta = prevTaskEntry.delta[metricKey];
+        }
+
+        if (typeof delta === 'number' && !Number.isNaN(delta)) {
           td.textContent = formatDelta(delta);
           if (delta > 0) {
             td.classList.add('delta-positive');
@@ -2293,10 +2302,19 @@ function attachPerClassBackwardHover(tableBody, backwardTransfer) {
         if (!vulnType) continue;
         const prevTaskEntry = bwdForJ.previous_tasks[String(i)];
         if (!prevTaskEntry) continue;
-        const curVal = prevTaskEntry.current[`f1_${vulnType}`];
-        const baseVal = prevTaskEntry.baseline[`f1_${vulnType}`];
-        if (typeof curVal === 'number' && typeof baseVal === 'number') {
-          const delta = curVal - baseVal;
+        const metricKey = `f1_${vulnType}`;
+        const hasCurrent = prevTaskEntry.current && typeof prevTaskEntry.current[metricKey] === 'number';
+        const hasBaseline = prevTaskEntry.baseline && typeof prevTaskEntry.baseline[metricKey] === 'number';
+        const hasDelta = prevTaskEntry.delta && typeof prevTaskEntry.delta[metricKey] === 'number';
+
+        let delta;
+        if (hasCurrent && hasBaseline) {
+          delta = prevTaskEntry.current[metricKey] - prevTaskEntry.baseline[metricKey];
+        } else if (hasDelta) {
+          delta = prevTaskEntry.delta[metricKey];
+        }
+
+        if (typeof delta === 'number' && !Number.isNaN(delta)) {
           td.textContent = formatDelta(delta);
           if (delta > 0) {
             td.classList.add('delta-positive');
